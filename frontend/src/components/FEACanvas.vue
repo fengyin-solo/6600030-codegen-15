@@ -10,6 +10,8 @@ let offsetY = 50;
 let scale = 1;
 let isDragging = false;
 let lastMouse = { x: 0, y: 0 };
+let focusPulse = 0;
+let pulseAnimId: number | null = null;
 
 function worldToScreen(x: number, y: number): [number, number] {
   return [x * scale + offsetX, y * scale + offsetY];
@@ -245,6 +247,34 @@ function draw() {
   ctx.font = '11px sans-serif';
   ctx.fillText(store.heatmapMode.toUpperCase(), 0, 0);
   ctx.restore();
+
+  // Draw focus target marker
+  if (store.focusTarget && store.result) {
+    const [fx, fy] = toScreen(store.focusTarget.x, store.focusTarget.y);
+    const baseR = 14 + focusPulse * 12;
+    const alpha = 1 - focusPulse;
+
+    ctx.beginPath();
+    ctx.arc(fx, fy, baseR, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(168, 85, 247, ${alpha})`;
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(fx, fy, baseR * 0.6, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(217, 70, 239, ${alpha * 0.8})`;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(fx - 10, fy);
+    ctx.lineTo(fx + 10, fy);
+    ctx.moveTo(fx, fy - 10);
+    ctx.lineTo(fx, fy + 10);
+    ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
 }
 
 function handleMouseDown(e: MouseEvent) {
@@ -272,12 +302,8 @@ function handleWheel(e: WheelEvent) {
   draw();
 }
 
-function handleClick(e: MouseEvent) {
-  const rect = canvas.value!.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-
-  const { nodes, elements } = store.model;
+function getDrawTransform() {
+  const { nodes } = store.model;
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const n of nodes) {
     minX = Math.min(minX, n.x);
@@ -294,6 +320,16 @@ function handleClick(e: MouseEvent) {
   const drawScale = fitScale * scale;
   const drawOffsetX = margin - minX * drawScale + (W - margin * 2 - worldW * drawScale) / 2;
   const drawOffsetY = margin - minY * drawScale + (H - margin * 2 - worldH * drawScale) / 2;
+  return { drawScale, drawOffsetX, drawOffsetY, W, H, worldW, worldH, minX, minY };
+}
+
+function handleClick(e: MouseEvent) {
+  const rect = canvas.value!.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  const { nodes, elements } = store.model;
+  const { drawScale, drawOffsetX, drawOffsetY } = getDrawTransform();
 
   // Find nearest element
   let bestDist = 15;
@@ -327,12 +363,55 @@ function handleClick(e: MouseEvent) {
   }
 
   store.selectElement(bestId);
+  store.clearFocus();
   draw();
+}
+
+function startPulseAnimation() {
+  focusPulse = 0;
+  const start = performance.now();
+  const duration = 1600;
+  if (pulseAnimId !== null) cancelAnimationFrame(pulseAnimId);
+  const tick = (now: number) => {
+    const t = Math.min(1, (now - start) / duration);
+    focusPulse = t;
+    draw();
+    if (t < 1) {
+      pulseAnimId = requestAnimationFrame(tick);
+    } else {
+      pulseAnimId = null;
+      store.clearFocus();
+    }
+  };
+  pulseAnimId = requestAnimationFrame(tick);
+}
+
+function centerOnPoint(wx: number, wy: number) {
+  if (!canvas.value) return;
+  const { drawScale, drawOffsetX, drawOffsetY, W, H } = getDrawTransform();
+  const currentSx = wx * drawScale + drawOffsetX;
+  const currentSy = wy * drawScale + drawOffsetY;
+  const targetSx = W / 2;
+  const targetSy = H / 2;
+  offsetX += targetSx - currentSx;
+  offsetY += targetSy - currentSy;
 }
 
 onMounted(() => {
   nextTick(draw);
 });
+
+watch(
+  () => store.focusTarget,
+  (target) => {
+    if (target) {
+      centerOnPoint(target.x, target.y);
+      startPulseAnimation();
+    } else {
+      nextTick(draw);
+    }
+  }
+);
 
 watch(
   () => [
