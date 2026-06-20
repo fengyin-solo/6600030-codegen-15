@@ -5,28 +5,48 @@ import { useFEAStore } from '../store/fea';
 const store = useFEAStore();
 const canvas = ref<HTMLCanvasElement>();
 
-let offsetX = 50;
-let offsetY = 50;
+let offsetX = 0;
+let offsetY = 0;
 let scale = 1;
 let isDragging = false;
 let lastMouse = { x: 0, y: 0 };
 let focusPulse = 0;
 let pulseAnimId: number | null = null;
 
-function worldToScreen(x: number, y: number): [number, number] {
-  return [x * scale + offsetX, y * scale + offsetY];
-}
-
-function screenToWorld(sx: number, sy: number): [number, number] {
-  return [(sx - offsetX) / scale, (sy - offsetY) / scale];
+function computeTransform() {
+  const W = canvas.value ? canvas.value.width : 800;
+  const H = canvas.value ? canvas.value.height : 500;
+  const { nodes } = store.model;
+  if (nodes.length === 0) {
+    return { W, H, drawScale: 1, drawOffsetX: offsetX, drawOffsetY: offsetY, fitScale: 1, minX: 0, minY: 0, worldW: 1, worldH: 1 };
+  }
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const n of nodes) {
+    minX = Math.min(minX, n.x);
+    maxX = Math.max(maxX, n.x);
+    minY = Math.min(minY, n.y);
+    maxY = Math.max(maxY, n.y);
+  }
+  const worldW = maxX - minX || 1;
+  const worldH = maxY - minY || 1;
+  const margin = 60;
+  const fitScale = Math.min((W - margin * 2) / worldW, (H - margin * 2) / worldH);
+  const drawScale = fitScale * scale;
+  const baseOffsetX = margin - minX * drawScale + (W - margin * 2 - worldW * drawScale) / 2;
+  const baseOffsetY = margin - minY * drawScale + (H - margin * 2 - worldH * drawScale) / 2;
+  return {
+    W, H, drawScale,
+    drawOffsetX: baseOffsetX + offsetX,
+    drawOffsetY: baseOffsetY + offsetY,
+    fitScale, minX, minY, worldW, worldH,
+  };
 }
 
 function draw() {
   const ctx = canvas.value?.getContext('2d');
   if (!ctx) return;
 
-  const W = canvas.value!.width;
-  const H = canvas.value!.height;
+  const { W, H, drawScale, drawOffsetX, drawOffsetY } = computeTransform();
 
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#0f172a';
@@ -40,24 +60,6 @@ function draw() {
     ctx.fillText('选择一个预设模型开始分析', W / 2, H / 2);
     return;
   }
-
-  // Auto-scale to fit
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const n of nodes) {
-    minX = Math.min(minX, n.x);
-    maxX = Math.max(maxX, n.x);
-    minY = Math.min(minY, n.y);
-    maxY = Math.max(maxY, n.y);
-  }
-  const worldW = maxX - minX || 1;
-  const worldH = maxY - minY || 1;
-  const margin = 60;
-  const fitScale = Math.min((W - margin * 2) / worldW, (H - margin * 2) / worldH);
-
-  // Use auto scale only if no manual zoom
-  const drawScale = fitScale * scale;
-  const drawOffsetX = margin - minX * drawScale + (W - margin * 2 - worldW * drawScale) / 2;
-  const drawOffsetY = margin - minY * drawScale + (H - margin * 2 - worldH * drawScale) / 2;
 
   function toScreen(x: number, y: number): [number, number] {
     return [x * drawScale + drawOffsetX, y * drawScale + drawOffsetY];
@@ -302,34 +304,13 @@ function handleWheel(e: WheelEvent) {
   draw();
 }
 
-function getDrawTransform() {
-  const { nodes } = store.model;
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const n of nodes) {
-    minX = Math.min(minX, n.x);
-    maxX = Math.max(maxX, n.x);
-    minY = Math.min(minY, n.y);
-    maxY = Math.max(maxY, n.y);
-  }
-  const worldW = maxX - minX || 1;
-  const worldH = maxY - minY || 1;
-  const W = canvas.value!.width;
-  const H = canvas.value!.height;
-  const margin = 60;
-  const fitScale = Math.min((W - margin * 2) / worldW, (H - margin * 2) / worldH);
-  const drawScale = fitScale * scale;
-  const drawOffsetX = margin - minX * drawScale + (W - margin * 2 - worldW * drawScale) / 2;
-  const drawOffsetY = margin - minY * drawScale + (H - margin * 2 - worldH * drawScale) / 2;
-  return { drawScale, drawOffsetX, drawOffsetY, W, H, worldW, worldH, minX, minY };
-}
-
 function handleClick(e: MouseEvent) {
   const rect = canvas.value!.getBoundingClientRect();
   const mx = e.clientX - rect.left;
   const my = e.clientY - rect.top;
 
   const { nodes, elements } = store.model;
-  const { drawScale, drawOffsetX, drawOffsetY } = getDrawTransform();
+  const { drawScale, drawOffsetX, drawOffsetY } = computeTransform();
 
   // Find nearest element
   let bestDist = 15;
@@ -388,7 +369,7 @@ function startPulseAnimation() {
 
 function centerOnPoint(wx: number, wy: number) {
   if (!canvas.value) return;
-  const { drawScale, drawOffsetX, drawOffsetY, W, H } = getDrawTransform();
+  const { drawScale, drawOffsetX, drawOffsetY, W, H } = computeTransform();
   const currentSx = wx * drawScale + drawOffsetX;
   const currentSy = wy * drawScale + drawOffsetY;
   const targetSx = W / 2;
